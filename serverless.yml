@@ -11,7 +11,7 @@ plugins:
 
 functions:
   checkInventory: 
-    handler: handler.checkInvetory
+    handler: handler.checkInventory
   calculateTotal:
     handler: handler.calculateTotal
 
