@@ -5,6 +5,13 @@ provider:
   name: aws
   runtime: nodejs18.x
   region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action: dynamodb:*
+      Resource: arn:aws:dynamodb:us-east-1:109418755717:table/bookTable
+    - Effect: Allow
+      Action: dynamodb:*
+      Resource: arn:aws:dynamodb:us-east-1:109418755717:table/userTable
 
 plugins:
   - serverless-step-functions
@@ -12,6 +19,10 @@ plugins:
 functions:
   checkInventory: 
     handler: handler.checkInventory
+    iamRoleStatements:
+    - Effect: Allow
+      Action: dynamodb:*
+      Resource: arn:aws:dynamodb:us-east-1:109418755717:table/bookTable
   calculateTotal:
     handler: handler.calculateTotal
 
@@ -26,10 +37,22 @@ stepFunctions:
             Type: Task
             Resource:
               Fn::GetAtt: [checkInventory, Arn]
+            Catch: 
+              - ErrorEquals: [BookNotFound]
+                Next: BookNotFoundError
+              - ErrorEquals: [BookOutOfStock]
+                Next: BookOutOfStockError
             Next: calculateTotal
           calculateTotal:
             Type: Task
             Resource:
               Fn::GetAtt: [calculateTotal, Arn]
             End: true
-
+          BookOutOfStockError:
+            Type: Pass
+            Result: "No such book available"
+            End: true
+          BookNotFoundError:
+            Type: Pass
+            Result: "Sorry, this book is out of stock"
+            End: true
