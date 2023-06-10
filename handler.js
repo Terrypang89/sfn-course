@@ -1,6 +1,12 @@
 const AWS = require("aws-sdk");
 const DynamoDB = require("aws-sdk/clients/dynamodb");
-const DocumentClient = new DynamoDB.DocumentClient({region: "us-east-1"});
+const DocumentClient = new DynamoDB.DocumentClient({
+  region: "us-east-1",
+  maxRetries: 3,
+  httpOptions: {
+    timeout: 5000
+  }
+});
 
 const isBookAvailable = (book, quantity) => {
   return (book.quantity - quantity) > 0
@@ -37,6 +43,74 @@ module.exports.checkInventory = async ({bookId, quantity}) => {
   }
 };
 
-module.exports.calculateTotal = async (event) => {
-  return 100;
+module.exports.calculateTotal = async ({book, quantity}) => {
+  // console.log(JSON.stringify(book));
+  let total = book.price*quantity;
+  return total;
+};
+
+const deductPoints = async (userId) => {
+  try {
+    let params = {
+      TableName: "userTable",
+      Key: { "userId": userId },
+      UpdateExpression: 'SET points = :zero',
+      ExpressionAttributeValues: {
+        ':zero': 0
+      }
+    }
+    await DocumentClient.update(params).promise()
+  } catch(e) {
+    throw new Error(e);
+  }
+}
+
+module.exports.redeemPoints = async ({userId, total}) => {
+  let orderTotal = total;
+
+  try {
+    let params = {
+      TableName: 'userTable',
+      Key: {
+        'userId': userId
+      }
+    }
+    let result = await DocumentClient.get(params).promise();
+    let user = result.Item;
+
+    const points = user.points;
+    if(orderTotal > points) {
+      console.log("orderTotal =" + orderTotal + " , points =" + points);
+      await deductPoints(userId);
+      orderTotal = orderTotal - points;
+      return { total: orderTotal, points}
+    } else {
+      throw new Error("Order total is less than redeem points orderTotal =" + orderTotal + " , points =" + points)
+    }
+  } catch(e) {
+    throw new Error(e);
+  }
+};
+
+module.exports.billCustomer = async (params) => {
+  return "Successfully billed";
+};
+
+module.exports.restoreRedeemPoints = async ({userId, total}) => {
+  try {
+    if(total.points) {
+      let params = {
+        TableName: "userTable",
+        Key: { "userId": userId },
+        updateExpression: 'SET points = :zero',
+        ExpressionAttributeValues: {
+          ':zero': 0
+        }
+      };
+    }
+    await DocumentClient.update(params).promise();
+  } catch(e) {
+    throw new Error(e);
+  }
+  return "Successfully billed";
 };

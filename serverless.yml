@@ -25,6 +25,17 @@ functions:
       Resource: arn:aws:dynamodb:us-east-1:109418755717:table/bookTable
   calculateTotal:
     handler: handler.calculateTotal
+  
+  redeemPoints:
+    handler: handler.redeemPoints
+    iamRoleStatements:
+    - Effect: Allow
+      Action: dynamodb:*
+      Resource: arn:aws:dynamodb:us-east-1:109418755717:table/userTable
+  billCustomer:
+    handler: handler.billCustomer
+  restoreRedeemPoints:
+    handler: handler.restoreRedeemPoints
 
 stepFunctions:
   stateMachines:
@@ -42,11 +53,43 @@ stepFunctions:
                 Next: BookNotFoundError
               - ErrorEquals: [BookOutOfStock]
                 Next: BookOutOfStockError
+            ResultPath: "$.book"
             Next: calculateTotal
           calculateTotal:
             Type: Task
             Resource:
               Fn::GetAtt: [calculateTotal, Arn]
+            ResultPath: "$.total"
+            Next: isRedeemNeeded
+          isRedeemNeeded:
+            Type: Choice
+            Choices:
+              - Variable: $.redeem
+                BooleanEquals: true
+                Next: RedeemPoints
+            Default: BillCustomer
+          RedeemPoints:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [redeemPoints, Arn]
+            ResultPath: "$.total"
+            Catch:
+              - ErrorEquals: [ States.ALL ]
+                Next: RedeemPointsError
+            Next: BillCustomer
+          BillCustomer:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [billCustomer, Arn]
+            ResultPath: "$.billingStatus"
+            Retry:
+              - ErrorEquals: [Status.ALL]
+                MaxAttempts: 3
+            Catch:
+              - ErrorEquals: [Status.ALL]
+                ResultPath: "$.customerBilling"
+                Next: BillingError
+            # Next: PrepareOrder
             End: true
           BookOutOfStockError:
             Type: Pass
@@ -55,4 +98,18 @@ stepFunctions:
           BookNotFoundError:
             Type: Pass
             Result: "Sorry, this book is out of stock"
+            End: true
+          RedeemPointsError:
+            Type: Pass
+            Result: "Error in redeem points"
+            End: true
+          BillingError:
+            Type: Pass
+            Result: "Billing Error"
+            ResultPath: "$.billingStatus"
+            Next: RestoreRedeemPoints
+          RestoreRedeemPoints:
+            Type: Task
+            Resource: 
+              Fn::GetAtt: [restoreRedeemPoints, Arn]
             End: true
