@@ -12,6 +12,15 @@ provider:
     - Effect: Allow
       Action: dynamodb:*
       Resource: arn:aws:dynamodb:us-east-1:109418755717:table/userTable
+    - Effect: Allow
+      Action: sns:*
+      Resource: arn:aws:sns:us-east-1:109418755717:NotifyCourier
+    - Effect: Allow
+      Action: sqs:*
+      Resource: arn:aws:sqs:us-east-1:109418755717:OrdersQueue
+    - Effect: Allow
+      Action: states:*
+      Resource: arn:aws:states:us-east-1:109418755717:stateMachine:storeCheckoutFlow
 
 plugins:
   - serverless-step-functions
@@ -19,23 +28,31 @@ plugins:
 functions:
   checkInventory: 
     handler: handler.checkInventory
-    iamRoleStatements:
-    - Effect: Allow
-      Action: dynamodb:*
-      Resource: arn:aws:dynamodb:us-east-1:109418755717:table/bookTable
+    # iamRoleStatements:
+    # - Effect: Allow
+    #   Action: dynamodb:*
+    #   Resource: arn:aws:dynamodb:us-east-1:109418755717:table/bookTable
   calculateTotal:
     handler: handler.calculateTotal
   
   redeemPoints:
     handler: handler.redeemPoints
-    iamRoleStatements:
-    - Effect: Allow
-      Action: dynamodb:*
-      Resource: arn:aws:dynamodb:us-east-1:109418755717:table/userTable
+    # iamRoleStatements:
+    # - Effect: Allow
+    #   Action: dynamodb:*
+    #   Resource: arn:aws:dynamodb:us-east-1:109418755717:table/userTable
   billCustomer:
     handler: handler.billCustomer
   restoreRedeemPoints:
     handler: handler.restoreRedeemPoints
+  restoreQuantity:
+    handler: handler.restoreQuantity
+  sqsWorker:
+    handler: handler.sqsWorker
+    events:
+    - sqs:
+        arn: arn:aws:sqs:us-east-1:109418755717:OrdersQueue
+        batchSize: 1
 
 stepFunctions:
   stateMachines:
@@ -89,7 +106,38 @@ stepFunctions:
               - ErrorEquals: [Status.ALL]
                 ResultPath: "$.customerBilling"
                 Next: BillingError
-            # Next: PrepareOrder
+            Next: PrepareOrder
+            # End: true
+          PrepareOrder:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+            Parameters:
+              QueueUrl: https://sqs.us-east-1.amazonaws.com/109418755717/OrdersQueue
+              MessageBody:
+                Input.$: "$" #the entire message object
+                Token.$: "$$.Task.Token" # context of the obj machine
+            ResultPath: "$.courierStatus"
+            Catch:
+              - ErrorEquals: [NoCourierAvailable]
+                ResultPath: "$.courierError"
+                Next: RefundCustomer
+            Next: DispatchOrder
+          RestoreQuantity:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [restoreQuantity, Arn]
+            ResultPath: "$.quantityRestoreStatus"
+            Next: RestoreRedeemPoints
+          DispatchOrder:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn: arn:aws:sns:us-east-1:109418755717:NotifyCourier
+              Message.$: "$"
+            Next: Dispatched
+          Dispatched:
+            Type: Pass
+            Result: "Your order will be dispatched in 24 hours"
             End: true
           BookOutOfStockError:
             Type: Pass
@@ -99,6 +147,11 @@ stepFunctions:
             Type: Pass
             Result: "Sorry, this book is out of stock"
             End: true
+          RefundCustomer:
+            Type: Pass
+            Result: "Customer is refunded"
+            ResultPath: "$.refundStatus"
+            Next: RestoreQuantity
           RedeemPointsError:
             Type: Pass
             Result: "Error in redeem points"
